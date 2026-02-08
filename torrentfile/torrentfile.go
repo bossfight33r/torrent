@@ -2,9 +2,12 @@ package torrentfile
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha1"
 	"fmt"
 	"os"
+	"torrent/peers"
+	"torrent/tracker"
 
 	"github.com/jackpal/bencode-go"
 )
@@ -28,6 +31,23 @@ type TorrentFile struct {
 	PieceLength int
 	Length      int
 	Name        string
+	Peers       []peers.Peer
+	PeerID      [20]byte
+}
+
+func (t *TorrentFile) FetchPeers() error {
+	var peerID [20]byte
+	if _, err := rand.Read(peerID[:]); err != nil {
+		return err
+	}
+	t.PeerID = peerID
+
+	p, err := tracker.RequestPeers(t.Announce, t.InfoHash, peerID, t.Length)
+	if err != nil {
+		return err
+	}
+	t.Peers = p
+	return nil
 }
 
 func Open(path string) (TorrentFile, error) {

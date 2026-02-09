@@ -1,21 +1,30 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"torrent/torrentfile"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: torrent <file.torrent>")
+	output := flag.String("output", "", "output file path")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Println("usage: torrent [--output <path>] <file.torrent>")
 		os.Exit(1)
 	}
 
-	tf, err := torrentfile.Open(os.Args[1])
+	tf, err := torrentfile.Open(flag.Arg(0))
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 		os.Exit(1)
+	}
+
+	out := *output
+	if out == "" {
+		out = tf.Name
 	}
 
 	if err := tf.FetchPeers(); err != nil {
@@ -23,8 +32,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("name:   %s\n", tf.Name)
-	fmt.Printf("length: %d bytes\n", tf.Length)
-	fmt.Printf("pieces: %d\n", len(tf.PieceHashes))
-	fmt.Printf("peers:  %d\n", len(tf.Peers))
+	if err := tf.Download(out); err != nil {
+		fmt.Printf("download error: %v\n", err)
+		os.Exit(1)
+	}
 }

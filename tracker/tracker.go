@@ -16,6 +16,7 @@ const Port uint16 = 6881
 type bencodeTrackerResponse struct {
 	Interval int    `bencode:"interval"`
 	Peers    string `bencode:"peers"`
+	Peers6   string `bencode:"peers6"`
 }
 
 func RequestPeers(announce string, infoHash [20]byte, peerID [20]byte, length int) ([]peers.Peer, error) {
@@ -52,7 +53,23 @@ func requestPeersHTTP(announce string, infoHash [20]byte, peerID [20]byte, lengt
 		return nil, err
 	}
 
-	return peers.Unmarshal([]byte(raw.Peers))
+	var result []peers.Peer
+
+	if len(raw.Peers) > 0 {
+		p, err := peers.Unmarshal([]byte(raw.Peers))
+		if err == nil {
+			result = append(result, p...)
+		}
+	}
+
+	if len(raw.Peers6) > 0 {
+		p, err := peers.UnmarshalIPv6([]byte(raw.Peers6))
+		if err == nil {
+			result = append(result, p...)
+		}
+	}
+
+	return result, nil
 }
 
 func buildURL(announce string, infoHash [20]byte, peerID [20]byte, length int) (string, error) {

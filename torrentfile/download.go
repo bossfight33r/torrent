@@ -2,6 +2,7 @@ package torrentfile
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"fmt"
 	"os"
@@ -13,10 +14,15 @@ import (
 
 	"github.com/charmbracelet/log"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/time/rate"
 )
 
 const MaxBlockSize = 16384
 const MaxBacklog = 5
+
+type DownloadOptions struct {
+	LimitBytesPerSec int
+}
 
 type pieceWork struct {
 	index  int
@@ -68,7 +74,7 @@ func (state *pieceProgress) readMessage() error {
 	return nil
 }
 
-func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
+func attemptDownloadPiece(c *client.Client, pw *pieceWork, limiter *rate.Limiter) ([]byte, error) {
 	state := pieceProgress{
 		index:  pw.index,
 		client: c,
@@ -84,6 +90,9 @@ func attemptDownloadPiece(c *client.Client, pw *pieceWork) ([]byte, error) {
 				blockSize := MaxBlockSize
 				if pw.length-state.requested < blockSize {
 					blockSize = pw.length - state.requested
+				}
+				if limiter != nil {
+					limiter.WaitN(context.Background(), blockSize)
 				}
 				if err := c.SendRequest(pw.index, state.requested, blockSize); err != nil {
 					return nil, err
@@ -107,7 +116,7 @@ func checkIntegrity(pw *pieceWork, buf []byte) error {
 	return nil
 }
 
-func (t *TorrentFile) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork, results chan *pieceResult, active *int32) {
+func (t *TorrentFile) startDownloadWorker(peer peers.Peer, workQueue chan *pieceWork, results chan *pieceResult, active *int32, limiter *rate.Limiter) {
 	c, err := client.New(peer, t.PeerID, t.InfoHash)
 	if err != nil {
 		return
@@ -129,7 +138,7 @@ func (t *TorrentFile) startDownloadWorker(peer peers.Peer, workQueue chan *piece
 			continue
 		}
 
-		buf, err := attemptDownloadPiece(c, pw)
+		buf, err := attemptDownloadPiece(c, pw, limiter)
 		if err != nil {
 			workQueue <- pw
 			return
@@ -154,19 +163,51 @@ func (t *TorrentFile) calculatePieceSize(index int) int {
 	return end - begin
 }
 
-func (t *TorrentFile) Download(outPath string) error {
+func (t *TorrentFile) checkExistingPiece(f *os.File, index int) bool {
+	pw := &pieceWork{index: index, hash: t.PieceHashes[index], length: t.calculatePieceSize(index)}
+	buf := make([]byte, pw.length)
+	_, err := f.ReadAt(buf, int64(index*t.PieceLength))
+	if err != nil {
+		return false
+	}
+	return checkIntegrity(pw, buf) == nil
+}
+
+func (t *TorrentFile) Download(outPath string, opts DownloadOptions) error {
 	log.Info("starting download", "file", t.Name, "peers", len(t.Peers), "pieces", len(t.PieceHashes))
+
+	f, err := os.OpenFile(outPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var limiter *rate.Limiter
+	if opts.LimitBytesPerSec > 0 {
+		limiter = rate.NewLimiter(rate.Limit(opts.LimitBytesPerSec), opts.LimitBytesPerSec)
+		log.Info("speed limit", "limit", fmt.Sprintf("%d KB/s", opts.LimitBytesPerSec/1024))
+	}
 
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
 	results := make(chan *pieceResult)
 	var active int32
+	skipped := 0
 
 	for index, hash := range t.PieceHashes {
-		workQueue <- &pieceWork{index, hash, t.calculatePieceSize(index)}
+		pw := &pieceWork{index, hash, t.calculatePieceSize(index)}
+		if t.checkExistingPiece(f, index) {
+			skipped++
+			continue
+		}
+		workQueue <- pw
+	}
+
+	if skipped > 0 {
+		log.Info("resuming", "skipped", skipped, "remaining", len(t.PieceHashes)-skipped)
 	}
 
 	for _, peer := range t.Peers {
-		go t.startDownloadWorker(peer, workQueue, results, &active)
+		go t.startDownloadWorker(peer, workQueue, results, &active, limiter)
 	}
 
 	name := t.Name
@@ -174,6 +215,7 @@ func (t *TorrentFile) Download(outPath string) error {
 		name = name[:27] + "..."
 	}
 
+	remaining := len(t.PieceHashes) - skipped
 	bar := progressbar.NewOptions(t.Length,
 		progressbar.OptionSetDescription(name),
 		progressbar.OptionShowBytes(true),
@@ -183,16 +225,24 @@ func (t *TorrentFile) Download(outPath string) error {
 		progressbar.OptionUseANSICodes(true),
 		progressbar.OptionOnCompletion(func() { fmt.Println() }),
 	)
+	bar.Add(skipped * t.PieceLength)
 
-	buf := make([]byte, t.Length)
-	for done := 0; done < len(t.PieceHashes); done++ {
+	done := 0
+	for done < remaining {
 		res := <-results
-		begin := res.index * t.PieceLength
-		copy(buf[begin:], res.buf)
+		offset := int64(res.index * t.PieceLength)
+		if _, err := f.WriteAt(res.buf, offset); err != nil {
+			return err
+		}
+		done++
 		bar.Add(len(res.buf))
 	}
 	close(workQueue)
 
-	log.Info("saving", "path", outPath)
-	return os.WriteFile(outPath, buf, 0644)
+	if done < remaining {
+		return fmt.Errorf("download incomplete: %d/%d pieces (not enough peers)", done, remaining)
+	}
+
+	log.Info("saved", "path", outPath)
+	return nil
 }

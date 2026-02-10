@@ -9,10 +9,11 @@ import (
 
 func main() {
 	output := flag.String("output", "", "output file path")
+	limit := flag.Int("limit", 0, "speed limit in KB/s (0 = unlimited)")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
-		fmt.Println("usage: torrent [--output <path>] <file.torrent>")
+		fmt.Println("usage: torrent [--output <path>] [--limit <KB/s>] <file.torrent>")
 		os.Exit(1)
 	}
 
@@ -24,7 +25,7 @@ func main() {
 
 	out := *output
 	if out == "" {
-		out = tf.Name
+		out = tf.OutputName()
 	}
 
 	if err := tf.FetchPeers(); err != nil {
@@ -32,7 +33,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := tf.Download(out); err != nil {
+	opts := torrentfile.DownloadOptions{
+		LimitBytesPerSec: *limit * 1024,
+	}
+
+	if err := tf.Download(out, opts); err != nil {
 		fmt.Printf("download error: %v\n", err)
 		os.Exit(1)
 	}

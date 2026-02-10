@@ -6,6 +6,8 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"torrent/peers"
 	"torrent/tracker"
 
@@ -13,27 +15,62 @@ import (
 	"github.com/jackpal/bencode-go"
 )
 
+type bencodeFile struct {
+	Length int      `bencode:"length"`
+	Path   []string `bencode:"path"`
+}
+
 type bencodeInfo struct {
-	Pieces      string `bencode:"pieces"`
-	PieceLength int    `bencode:"piece length"`
-	Length      int    `bencode:"length"`
-	Name        string `bencode:"name"`
+	Pieces      string        `bencode:"pieces"`
+	PieceLength int           `bencode:"piece length"`
+	Length      int           `bencode:"length"`
+	Name        string        `bencode:"name"`
+	Files       []bencodeFile `bencode:"files"`
 }
 
 type bencodeTorrent struct {
-	Announce string      `bencode:"announce"`
-	Info     bencodeInfo `bencode:"info"`
+	Announce     string     `bencode:"announce"`
+	AnnounceList [][]string `bencode:"announce-list"`
+	Info         bencodeInfo `bencode:"info"`
+}
+
+type FileEntry struct {
+	Path   string
+	Length int
+	Offset int
 }
 
 type TorrentFile struct {
-	Announce    string
-	InfoHash    [20]byte
-	PieceHashes [][20]byte
-	PieceLength int
-	Length      int
-	Name        string
-	Peers       []peers.Peer
-	PeerID      [20]byte
+	Announce     string
+	AnnounceList [][]string
+	InfoHash     [20]byte
+	PieceHashes  [][20]byte
+	PieceLength  int
+	Length       int
+	Name         string
+	Files        []FileEntry
+	Peers        []peers.Peer
+	PeerID       [20]byte
+}
+
+func (t *TorrentFile) Trackers() []string {
+	seen := map[string]bool{}
+	var out []string
+
+	add := func(u string) {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+
+	add(t.Announce)
+	for _, tier := range t.AnnounceList {
+		for _, u := range tier {
+			add(u)
+		}
+	}
+	return out
 }
 
 func (t *TorrentFile) FetchPeers() error {
@@ -43,13 +80,22 @@ func (t *TorrentFile) FetchPeers() error {
 	}
 	t.PeerID = peerID
 
-	log.Info("fetching peers", "tracker", t.Announce)
+	trackers := t.Trackers()
+	log.Info("fetching peers", "trackers", len(trackers))
 
-	p, err := tracker.RequestPeers(t.Announce, t.InfoHash, peerID, t.Length)
-	if err != nil {
-		return err
+	for _, u := range trackers {
+		p, err := tracker.RequestPeers(u, t.InfoHash, peerID, t.Length)
+		if err != nil {
+			log.Debug("tracker failed", "url", u, "err", err)
+			continue
+		}
+		t.Peers = append(t.Peers, p...)
+		log.Info("tracker ok", "url", u, "peers", len(p))
 	}
-	t.Peers = p
+
+	if len(t.Peers) == 0 {
+		return fmt.Errorf("no peers found from any tracker")
+	}
 	log.Info("found peers", "total", len(t.Peers))
 	return nil
 }
@@ -80,14 +126,41 @@ func (b *bencodeTorrent) toTorrentFile() (TorrentFile, error) {
 		return TorrentFile{}, err
 	}
 
+	files, totalLength := b.Info.buildFiles()
+
+	length := b.Info.Length
+	if length == 0 {
+		length = totalLength
+	}
+
 	return TorrentFile{
-		Announce:    b.Announce,
-		InfoHash:    infoHash,
-		PieceHashes: pieceHashes,
-		PieceLength: b.Info.PieceLength,
-		Length:      b.Info.Length,
-		Name:        b.Info.Name,
+		Announce:     b.Announce,
+		AnnounceList: b.AnnounceList,
+		InfoHash:     infoHash,
+		PieceHashes:  pieceHashes,
+		PieceLength:  b.Info.PieceLength,
+		Length:       length,
+		Name:         b.Info.Name,
+		Files:        files,
 	}, nil
+}
+
+func (i *bencodeInfo) buildFiles() ([]FileEntry, int) {
+	if len(i.Files) == 0 {
+		return []FileEntry{{Path: i.Name, Length: i.Length}}, i.Length
+	}
+
+	var files []FileEntry
+	offset := 0
+	for _, f := range i.Files {
+		files = append(files, FileEntry{
+			Path:   filepath.Join(append([]string{i.Name}, f.Path...)...),
+			Length: f.Length,
+			Offset: offset,
+		})
+		offset += f.Length
+	}
+	return files, offset
 }
 
 func (i *bencodeInfo) hash() ([20]byte, error) {
@@ -109,4 +182,26 @@ func (i *bencodeInfo) splitPieceHashes() ([][20]byte, error) {
 		copy(hashes[idx][:], buf[idx*20:(idx+1)*20])
 	}
 	return hashes, nil
+}
+
+func (t *TorrentFile) IsMultiFile() bool {
+	return len(t.Files) > 1
+}
+
+func (t *TorrentFile) CreateDirs(base string) error {
+	for _, f := range t.Files {
+		full := filepath.Join(base, f.Path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sanitizeName(name string) string {
+	return strings.ReplaceAll(name, "/", "_")
+}
+
+func (t *TorrentFile) OutputName() string {
+	return sanitizeName(t.Name)
 }

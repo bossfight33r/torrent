@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"torrent/peers"
 	"torrent/tracker"
 
@@ -83,15 +84,26 @@ func (t *TorrentFile) FetchPeers() error {
 	trackers := t.Trackers()
 	log.Info("fetching peers", "trackers", len(trackers))
 
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
 	for _, u := range trackers {
-		p, err := tracker.RequestPeers(u, t.InfoHash, peerID, t.Length)
-		if err != nil {
-			log.Debug("tracker failed", "url", u, "err", err)
-			continue
-		}
-		t.Peers = append(t.Peers, p...)
-		log.Info("tracker ok", "url", u, "peers", len(p))
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			p, err := tracker.RequestPeers(url, t.InfoHash, peerID, t.Length)
+			if err != nil {
+				log.Debug("tracker failed", "url", url, "err", err)
+				return
+			}
+			mu.Lock()
+			t.Peers = append(t.Peers, p...)
+			mu.Unlock()
+			log.Info("tracker ok", "url", url, "peers", len(p))
+		}(u)
 	}
+
+	wg.Wait()
 
 	if len(t.Peers) == 0 {
 		return fmt.Errorf("no peers found from any tracker")

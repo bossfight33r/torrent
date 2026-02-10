@@ -10,6 +10,9 @@ import (
 	"torrent/client"
 	"torrent/message"
 	"torrent/peers"
+
+	"github.com/charmbracelet/log"
+	"github.com/schollz/progressbar/v3"
 )
 
 const MaxBlockSize = 16384
@@ -111,7 +114,11 @@ func (t *TorrentFile) startDownloadWorker(peer peers.Peer, workQueue chan *piece
 	}
 	defer c.Conn.Close()
 	atomic.AddInt32(active, 1)
-	defer atomic.AddInt32(active, -1)
+	log.Info("peer connected", "addr", peer.String())
+	defer func() {
+		atomic.AddInt32(active, -1)
+		log.Info("peer disconnected", "addr", peer.String())
+	}()
 
 	c.SendUnchoke()
 	c.SendInterested()
@@ -148,6 +155,8 @@ func (t *TorrentFile) calculatePieceSize(index int) int {
 }
 
 func (t *TorrentFile) Download(outPath string) error {
+	log.Info("starting download", "file", t.Name, "peers", len(t.Peers), "pieces", len(t.PieceHashes))
+
 	workQueue := make(chan *pieceWork, len(t.PieceHashes))
 	results := make(chan *pieceResult)
 	var active int32
@@ -160,16 +169,30 @@ func (t *TorrentFile) Download(outPath string) error {
 		go t.startDownloadWorker(peer, workQueue, results, &active)
 	}
 
+	name := t.Name
+	if len(name) > 30 {
+		name = name[:27] + "..."
+	}
+
+	bar := progressbar.NewOptions(t.Length,
+		progressbar.OptionSetDescription(name),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWidth(40),
+		progressbar.OptionThrottle(200*time.Millisecond),
+		progressbar.OptionShowElapsedTimeOnFinish(),
+		progressbar.OptionUseANSICodes(true),
+		progressbar.OptionOnCompletion(func() { fmt.Println() }),
+	)
+
 	buf := make([]byte, t.Length)
 	for done := 0; done < len(t.PieceHashes); done++ {
 		res := <-results
 		begin := res.index * t.PieceLength
 		copy(buf[begin:], res.buf)
-		pct := float64(done+1) / float64(len(t.PieceHashes)) * 100
-		fmt.Printf("\r%.1f%%", pct)
+		bar.Add(len(res.buf))
 	}
-	fmt.Println()
 	close(workQueue)
 
+	log.Info("saving", "path", outPath)
 	return os.WriteFile(outPath, buf, 0644)
 }

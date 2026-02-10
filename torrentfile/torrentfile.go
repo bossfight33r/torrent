@@ -9,6 +9,7 @@ import (
 	"torrent/peers"
 	"torrent/tracker"
 
+	"github.com/charmbracelet/log"
 	"github.com/jackpal/bencode-go"
 )
 
@@ -42,11 +43,14 @@ func (t *TorrentFile) FetchPeers() error {
 	}
 	t.PeerID = peerID
 
+	log.Info("fetching peers", "tracker", t.Announce)
+
 	p, err := tracker.RequestPeers(t.Announce, t.InfoHash, peerID, t.Length)
 	if err != nil {
 		return err
 	}
 	t.Peers = p
+	log.Info("found peers", "total", len(t.Peers))
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package tracker
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,7 +19,19 @@ type bencodeTrackerResponse struct {
 }
 
 func RequestPeers(announce string, infoHash [20]byte, peerID [20]byte, length int) ([]peers.Peer, error) {
-	return requestPeersHTTP(announce, infoHash, peerID, length)
+	u, err := url.Parse(announce)
+	if err != nil {
+		return nil, err
+	}
+
+	switch u.Scheme {
+	case "udp":
+		return requestPeersUDP(u.Host, infoHash, peerID, length)
+	case "http", "https":
+		return requestPeersHTTP(announce, infoHash, peerID, length)
+	default:
+		return nil, fmt.Errorf("unsupported tracker scheme: %s", u.Scheme)
+	}
 }
 
 func requestPeersHTTP(announce string, infoHash [20]byte, peerID [20]byte, length int) ([]peers.Peer, error) {

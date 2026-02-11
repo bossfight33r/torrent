@@ -105,11 +105,25 @@ func (t *TorrentFile) FetchPeers() error {
 
 	wg.Wait()
 
+	t.Peers = dedupPeers(t.Peers)
+
 	if len(t.Peers) == 0 {
 		return fmt.Errorf("no peers found from any tracker")
 	}
 	log.Info("found peers", "total", len(t.Peers))
 	return nil
+}
+
+func dedupPeers(in []peers.Peer) []peers.Peer {
+	seen := map[string]bool{}
+	var out []peers.Peer
+	for _, p := range in {
+		if !seen[p.String()] {
+			seen[p.String()] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func Open(path string) (TorrentFile, error) {

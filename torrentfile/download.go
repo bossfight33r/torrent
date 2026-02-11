@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 	"torrent/client"
@@ -206,9 +207,19 @@ func (t *TorrentFile) Download(outPath string, opts DownloadOptions) error {
 		log.Info("resuming", "skipped", skipped, "remaining", len(t.PieceHashes)-skipped)
 	}
 
+	var wg sync.WaitGroup
 	for _, peer := range t.Peers {
-		go t.startDownloadWorker(peer, workQueue, results, &active, limiter)
+		wg.Add(1)
+		go func(p peers.Peer) {
+			defer wg.Done()
+			t.startDownloadWorker(p, workQueue, results, &active, limiter)
+		}(peer)
 	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
 
 	name := t.Name
 	if len(name) > 30 {
@@ -228,14 +239,16 @@ func (t *TorrentFile) Download(outPath string, opts DownloadOptions) error {
 	bar.Add(skipped * t.PieceLength)
 
 	done := 0
-	for done < remaining {
-		res := <-results
+	for res := range results {
 		offset := int64(res.index * t.PieceLength)
 		if _, err := f.WriteAt(res.buf, offset); err != nil {
 			return err
 		}
 		done++
 		bar.Add(len(res.buf))
+		if done >= remaining {
+			break
+		}
 	}
 	close(workQueue)
 

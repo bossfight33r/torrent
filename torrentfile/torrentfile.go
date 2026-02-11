@@ -30,8 +30,8 @@ type bencodeInfo struct {
 }
 
 type bencodeTorrent struct {
-	Announce     string     `bencode:"announce"`
-	AnnounceList [][]string `bencode:"announce-list"`
+	Announce     string      `bencode:"announce"`
+	AnnounceList [][]string  `bencode:"announce-list"`
 	Info         bencodeInfo `bencode:"info"`
 }
 
@@ -175,9 +175,41 @@ func (i *bencodeInfo) buildFiles() ([]FileEntry, int) {
 	return files, offset
 }
 
+type bencodeInfoSingle struct {
+	Pieces      string `bencode:"pieces"`
+	PieceLength int    `bencode:"piece length"`
+	Length      int    `bencode:"length"`
+	Name        string `bencode:"name"`
+}
+
+type bencodeInfoMulti struct {
+	Pieces      string        `bencode:"pieces"`
+	PieceLength int           `bencode:"piece length"`
+	Name        string        `bencode:"name"`
+	Files       []bencodeFile `bencode:"files"`
+}
+
 func (i *bencodeInfo) hash() ([20]byte, error) {
 	var buf bytes.Buffer
-	if err := bencode.Marshal(&buf, *i); err != nil {
+	var err error
+
+	if len(i.Files) > 0 {
+		err = bencode.Marshal(&buf, bencodeInfoMulti{
+			Pieces:      i.Pieces,
+			PieceLength: i.PieceLength,
+			Name:        i.Name,
+			Files:       i.Files,
+		})
+	} else {
+		err = bencode.Marshal(&buf, bencodeInfoSingle{
+			Pieces:      i.Pieces,
+			PieceLength: i.PieceLength,
+			Length:      i.Length,
+			Name:        i.Name,
+		})
+	}
+
+	if err != nil {
 		return [20]byte{}, err
 	}
 	return sha1.Sum(buf.Bytes()), nil

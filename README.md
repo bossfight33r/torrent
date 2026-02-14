@@ -19,31 +19,42 @@
   git clone https://github.com/bossfight33r/torrent
   cd torrent
   go build -o torrent .
+  ```
 
   Requires Go 1.21+.
 
-  Usage
+  ## Usage
 
-  # basic download
+  Basic download:
+
+  ```bash
   ./torrent file.torrent
+  ```
 
-  # specify output path
+  Specify output path:
+
+  ```bash
   ./torrent --output ~/Downloads/file.iso file.torrent
+  ```
 
-  # limit download speed (KB/s)
+  Limit download speed (KB/s):
+
+  ```bash
   ./torrent --output ~/Downloads/file.iso --limit 5000 file.torrent
+  ```
 
-  How it works
+  ## How it works
 
-  1. Parses the .torrent file (Bencode format) to extract metadata and piece hashes
+  1. Parses the `.torrent` file (Bencode format) to extract metadata and piece hashes
   2. Contacts all trackers in parallel (HTTP and UDP) to discover peers
   3. Opens TCP connections to peers and performs the BitTorrent handshake
   4. Downloads pieces concurrently, one goroutine per peer
   5. Verifies each piece against its SHA-1 hash before writing
   6. Streams directly to disk — no full-file buffering in memory
 
-  Project structure
+  ## Project structure
 
+  ```
   torrent/
   ├── torrentfile/   — .torrent parsing and download orchestration
   ├── tracker/       — HTTP and UDP tracker communication

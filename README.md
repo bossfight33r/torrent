@@ -1,52 +1,54 @@
 # torrent
 
-A BitTorrent client written in Go
+  A fast, lightweight BitTorrent client written in Go — built from scratch with no external
+  BitTorrent libraries.
 
-## Features
+  ## Features
 
-- HTTP and UDP tracker support
-- Parallel piece downloading from multiple peers
-- SHA-1 integrity verification for every piece
-- Resume interrupted downloads
-- Multi-file torrent support
-- Download speed display
-- Speed limiting
-- IPv4 and IPv6 peers
+  - **Tracker support** — HTTP and UDP trackers contacted in parallel
+  - **Concurrent downloads** — pieces fetched simultaneously from multiple peers via goroutines
+  - **Integrity verification** — every piece validated against its SHA-1 hash before writing
+  - **Resume support** — interrupted downloads pick up where they left off
+  - **Multi-file torrents** — handles both single-file and multi-file `.torrent` files
+  - **Speed limiting** — cap download bandwidth in KB/s
+  - **IPv4 & IPv6** — full dual-stack peer support
 
-## Usage
+  ## Install
 
-```bash
-go build -o torrent .
-```
+  ```bash
+  git clone https://github.com/bossfight33r/torrent
+  cd torrent
+  go build -o torrent .
 
-```bash
-# basic download
-./torrent file.torrent
+  Requires Go 1.21+.
 
-# specify output path
-./torrent --output ~/Downloads/file.iso file.torrent
+  Usage
 
-# limit download speed (KB/s)
-./torrent --output ~/Downloads/file.iso --limit 5000 file.torrent
-```
+  # basic download
+  ./torrent file.torrent
 
-## How it works
+  # specify output path
+  ./torrent --output ~/Downloads/file.iso file.torrent
 
-1. Parses the `.torrent` file (Bencode format) to extract metadata and piece hashes
-2. Contacts trackers (HTTP/UDP) in parallel to discover peers
-3. Performs BitTorrent handshake with each peer over TCP
-4. Downloads pieces concurrently from multiple peers using goroutines
-5. Verifies each piece against its SHA-1 hash before writing to disk
-6. Streams pieces directly to disk instead of buffering in memory
+  # limit download speed (KB/s)
+  ./torrent --output ~/Downloads/file.iso --limit 5000 file.torrent
 
-## Project structure
+  How it works
 
-```
-torrentfile/   — torrent file parsing and download orchestration
-tracker/       — HTTP and UDP tracker communication
-peers/         — peer address parsing (IPv4/IPv6)
-client/        — TCP connection and BitTorrent protocol
-handshake/     — BitTorrent handshake implementation
-message/       — message serialization and parsing
-bitfield/      — bitfield for tracking piece availability
-```
+  1. Parses the .torrent file (Bencode format) to extract metadata and piece hashes
+  2. Contacts all trackers in parallel (HTTP and UDP) to discover peers
+  3. Opens TCP connections to peers and performs the BitTorrent handshake
+  4. Downloads pieces concurrently, one goroutine per peer
+  5. Verifies each piece against its SHA-1 hash before writing
+  6. Streams directly to disk — no full-file buffering in memory
+
+  Project structure
+
+  torrent/
+  ├── torrentfile/   — .torrent parsing and download orchestration
+  ├── tracker/       — HTTP and UDP tracker communication
+  ├── peers/         — peer address parsing (IPv4/IPv6)
+  ├── client/        — TCP connection and BitTorrent protocol
+  ├── handshake/     — handshake implementation
+  ├── message/       — message serialization and parsing
+  └── bitfield/      — bitfield for tracking available pieces
